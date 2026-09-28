@@ -12,6 +12,7 @@ This test suite validates the refresh token mechanism including:
 """
 import pytest
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 from fastapi import HTTPException, status
@@ -821,7 +822,13 @@ async def test_refresh_token_replay_attack():
     """Test that reusing a rotated refresh token is rejected as replay attack."""
     from httpx import AsyncClient, ASGITransport
     from backend.main import app
+    from backend.config import get_settings
     import uuid
+    
+    # Ensure refresh token rotation is enabled for this test
+    settings = get_settings()
+    if not settings.security.refresh_token_rotation_enabled:
+        pytest.skip("Refresh token rotation is disabled - skipping replay attack test")
     
     email = f"test+{uuid.uuid4()}@example.com"
     
@@ -832,6 +839,7 @@ async def test_refresh_token_replay_attack():
         assert r.status_code == 201
         
         refresh_token_1 = r.cookies.get("refresh_token")
+        assert refresh_token_1 is not None, "No refresh token cookie set after signup"
         
         # First refresh - this should rotate the token
         cookies = {"refresh_token": refresh_token_1}
@@ -839,6 +847,10 @@ async def test_refresh_token_replay_attack():
         assert r.status_code == 200
         
         refresh_token_2 = r.cookies.get("refresh_token")
+        assert refresh_token_2 is not None, "No refresh token cookie set after refresh"
+        
+        # Verify that rotation actually happened (tokens should be different)
+        assert refresh_token_1 != refresh_token_2, "Token rotation did not occur - tokens are identical"
         
         # Try to reuse the old token - should be rejected as replay attack
         cookies = {"refresh_token": refresh_token_1}
