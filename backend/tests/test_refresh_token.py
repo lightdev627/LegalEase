@@ -832,6 +832,7 @@ async def test_refresh_token_replay_attack():
     
     email = f"test+{uuid.uuid4()}@example.com"
     
+    # Use separate client instances to avoid cookie persistence issues
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         # Signup
         signup_payload = {"email": email, "password": "securePass123"}
@@ -842,21 +843,25 @@ async def test_refresh_token_replay_attack():
         assert refresh_token_1 is not None, "No refresh token cookie set after signup"
         
         # First refresh - this should rotate the token
-        cookies = {"refresh_token": refresh_token_1}
-        r = await ac.get("/auth/refresh", cookies=cookies, follow_redirects=False)
-        assert r.status_code == 200
-        
-        refresh_token_2 = r.cookies.get("refresh_token")
-        assert refresh_token_2 is not None, "No refresh token cookie set after refresh"
-        
-        # Verify that rotation actually happened (tokens should be different)
-        assert refresh_token_1 != refresh_token_2, "Token rotation did not occur - tokens are identical"
+        # Use a fresh client to avoid any cookie contamination
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac2:
+            cookies = {"refresh_token": refresh_token_1}
+            r = await ac2.get("/auth/refresh", cookies=cookies, follow_redirects=False)
+            assert r.status_code == 200
+            
+            refresh_token_2 = r.cookies.get("refresh_token")
+            assert refresh_token_2 is not None, "No refresh token cookie set after refresh"
+            
+            # Verify that rotation actually happened (tokens should be different)
+            assert refresh_token_1 != refresh_token_2, "Token rotation did not occur - tokens are identical"
         
         # Try to reuse the old token - should be rejected as replay attack
-        cookies = {"refresh_token": refresh_token_1}
-        r = await ac.get("/auth/refresh", cookies=cookies, follow_redirects=False)
-        assert r.status_code == 401
-        assert "invalid refresh token" in r.json()["detail"].lower()
+        # Use another fresh client to ensure no cookie state pollution
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac3:
+            cookies = {"refresh_token": refresh_token_1}
+            r = await ac3.get("/auth/refresh", cookies=cookies, follow_redirects=False)
+            assert r.status_code == 401, f"Expected 401, got {r.status_code}. Response: {r.text}"
+            assert "invalid refresh token" in r.json()["detail"].lower()
 
 
 @pytest.mark.integration

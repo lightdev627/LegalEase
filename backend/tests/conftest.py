@@ -100,3 +100,35 @@ def clear_rate_limiters():
     except Exception:
         pass
 
+@pytest.fixture(autouse=True)
+def clear_database():
+    """Clear database tables before each test to ensure test isolation."""
+    try:
+        from backend.database import engine
+        from sqlalchemy import inspect
+        
+        # Get all tables
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        # Clear all tables in reverse order of dependencies
+        with engine.connect() as conn:
+            # Disable foreign key constraints for SQLite
+            if engine.dialect.name == 'sqlite':
+                conn.execute("PRAGMA foreign_keys=OFF")
+            
+            # Delete all rows from each table
+            for table in reversed(tables):
+                try:
+                    conn.execute(f"DELETE FROM {table}")
+                except Exception:
+                    pass
+            
+            # Re-enable foreign key constraints for SQLite
+            if engine.dialect.name == 'sqlite':
+                conn.execute("PRAGMA foreign_keys=ON")
+            
+            conn.commit()
+    except Exception:
+        pass
+
